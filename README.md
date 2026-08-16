@@ -49,8 +49,11 @@ dsh plugin --profile web remove dsh-peak-price-guard
 
 - 针对 **DeepSeek Harness `0.1.0-rc.6`** 开发与验证。上游是开发者预览版，`dsh.bundle`/`dsh.client`/SRC Remote 协议可能变动，升级前请核对。
 - 客户端 bundle 为手写的 `window.__ModuleLoader__` 工厂格式，无需打包工具；如需改成 TypeScript/JSX，请自行接入构建并保持该输出格式。
+- 识别范围以 **provider id** 为准（`deepseek-official` 或含 `deepseek` 的 provider）：第三方平台（如 OpenRouter）即使提供 deepseek 模型，其定价不遵循官方高峰/空闲方案，不会被拦截。
 - 本插件是社区作品，与 DeepSeek 官方无关联、未经其背书。高峰时段定义（9:00–12:00 / 14:00–18:00）来自 DeepSeek 官方定价页，请以官方最新公告为准。
 
 ## License
 
-MIT
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)
+
+个人学习、研究、非商业组织等非商业用途免费使用；**任何商业用途必须事先获得作者书面授权**，未授权商用视为违约。

@@ -39,9 +39,10 @@ function isPeakTime(nowMs) {
 }
 
 function isDeepseek(options) {
+  // Provider-id based only: model names may contain "deepseek" on third-party
+  // providers (e.g. OpenRouter) whose pricing is not the official peak scheme.
   const provider = String(options?.provider ?? '').toLowerCase()
-  const model = String(options?.model ?? '').toLowerCase()
-  return provider === TARGET_PROVIDER || provider.includes('deepseek') || model.includes('deepseek')
+  return provider === TARGET_PROVIDER || provider.includes('deepseek')
 }
 
 function prune(service) {
@@ -53,15 +54,16 @@ class PeakPriceGuardService extends TypertRemoteService {
     super(ctx, 'peakPriceGuard', { namespace: 'peak-price-guard' })
     // SRC remote markers without the typert build transform: the compiled form
     // of `@Remote('peakPending')` is exactly this call (see dsh-typert-protocol).
+    // The initializer must run with `this` = the service instance so the marker
+    // lands on PeakPriceGuardService.prototype — capture it in a closure.
+    const self = this
     for (const method of ['peakPending', 'peakAnswer']) {
       Remote(method)(function () {}, {
         kind: 'method',
         name: method,
         static: false,
         private: false,
-        addInitializer(initializer) {
-          initializer.call(this)
-        },
+        addInitializer: (initializer) => initializer.call(self),
       })
     }
     const hours = Number(config?.promptWindowHours ?? 4)

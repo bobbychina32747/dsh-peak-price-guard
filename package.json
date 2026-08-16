@@ -35,5 +35,9 @@
     "pricing",
     "cost-guard"
   ],
-  "license": "MIT"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bobbychina32747/dsh-peak-price-guard.git"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0"
 }
