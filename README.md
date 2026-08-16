@@ -10,7 +10,7 @@ DeepSeek Harness 插件：**高峰时段拦截 DeepSeek API 请求，弹窗确�
 ## 安装
 
 ```bash
-dsh plugin --profile web add github:<你的用户名>/dsh-peak-price-guard
+dsh plugin --profile web add github:bobbychina32747/dsh-peak-price-guard
 ```
 
 重启 `dsh web`（或下次启动时）自动加载——bundle 补丁层会在引导期把插件行合入 profile 组合，无需任何手动配置。
