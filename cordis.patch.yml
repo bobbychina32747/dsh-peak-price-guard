@@ -1,0 +1,8 @@
+# dsh-peak-price-guard bundle layer: mounts the host plugin row into the
+# profile composition at boot. The host plugin owns the llm/stream
+# interceptor and the SRC remote gates the browser modal polls.
+- insert:
+    - id: peak-price-guard
+      name: dsh-peak-price-guard
+      config:
+        promptWindowHours: 4
