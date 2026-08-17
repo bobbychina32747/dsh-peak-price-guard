@@ -28,12 +28,16 @@ dsh plugin --profile web remove dsh-peak-price-guard
 
 ## 配置
 
-提醒窗口时长通过组合行配置覆盖（编辑 `~/.dsh/profiles/web/cordis.patch.yml`）：
+**设置页**（推荐）：设置 → **高峰提醒**，可开关拦截、调整提醒间隔（0.25–168 小时），保存即生效（持久化到用户设置文档，无需重启；修改会重置已缓存的会话选择）。
+
+**组合行配置**（高级）：作为设置的 `base` 层，或当作无设置服务时的兜底，编辑 `~/.dsh/profiles/web/cordis.patch.yml`：
 
 ```yaml
 - id: peak-price-guard
   config:
-    promptWindowHours: 8
+    promptWindowHours: 4   # 默认提醒间隔（小时）
+    enabled: true          # 默认开关
+    extraProviders: []     # 自定义指向 api.deepseek.com 的 provider id 列表
 ```
 
 ## 工作原理
@@ -41,9 +45,10 @@ dsh plugin --profile web remove dsh-peak-price-guard
 | 层 | 机制 |
 | --- | --- |
 | 自动加载 | `package.json` 的 `dsh.bundle.patch` 指向 `cordis.patch.yml`，profile 引导期按 `dsh.profile.bundles` 顺序合入组合；`dsh plugin add` 会把它写进 profile 依赖和 bundles 列表 |
-| Host 拦截 | 监听 `llm/stream` 瀑布（覆盖 agent 循环的所有流式调用，含 prepared-call 路径），高峰 + DeepSeek 时创建门控（gate）挂起请求；取消时产出与 adapter 失败同协议的终止 `finish` chunk（`PEAK_PRICE_DENIED`），走 agent 循环优雅的错误通道 |
+| Host 拦截 | 监听 `llm/stream` 瀑布（覆盖 agent 循环的所有流式调用，含 prepared-call 路径），高峰 + DeepSeek 时创建门控（gate）挂起请求；取消时产出与 adapter 失败同协议的终止 `finish` chunk（`PEAK_PRICE_DENIED`，携带超限 `providerRetryAfterMs` 让重试策略直接跳过退避），走 agent 循环优雅的错误通道 |
 | 弹窗 | `dsh.client` 声明 + `exports["./client"]`，客户端半部注册到 `shell.overlay` 槽位，800ms 轮询 Host |
 | 客户端↔宿主通信 | Typert Gateway 的 **SRC 模式**：Host 服务继承 `TypertRemoteService` 并用 `Remote` 协议标记方法（无需 typert 构建链），浏览器通过 `connection.rpc.call('/api', 'peak-price-guard/<method>', ...)` 直接调用 |
+| 配置持久化 | 宿主通过 settings 服务注册 `peak-price-guard` 命名空间（schemastery schema + 组合 base 层），设置页写入、`watch` 实时生效 |
 
 ## 兼容性
 

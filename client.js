@@ -7,10 +7,13 @@
  * mounts the plugin. The factory receives `require` for platform seed words
  * (`react`) and other registered bundles.
  *
- * The plugin registers a frame-wide modal in the `shell.overlay` slot and
- * polls the Host's SRC remote `peak-price-guard/peakPending` every 800ms.
- * When a gate is pending it shows a two-button card; the answer goes back
- * through `peak-price-guard/peakAnswer`.
+ * Two surfaces:
+ *  - a frame-wide two-button modal in the `shell.overlay` slot that polls the
+ *    Host's SRC remote `peak-price-guard/peakPending` every 800ms and answers
+ *    through `peak-price-guard/peakAnswer`;
+ *  - a settings page (`settings.section` id `peak-price-guard`) that reads and
+ *    writes `enabled` / `promptWindowHours` through `peakGetConfig` /
+ *    `peakSetConfig`.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-peak-price-guard',
@@ -29,7 +32,15 @@ window.__ModuleLoader__.load({
       '.pkg-peak-btn{min-width:88px;height:32px;border-radius:8px;font-size:14px;line-height:20px;cursor:pointer;padding:0 16px}' +
       '.pkg-peak-btn:disabled{opacity:0.5;cursor:default}' +
       '.pkg-peak-cancel{border:1px solid var(--dsw-alias-border-l2-darkmode-thin);background:transparent;color:var(--dsw-alias-label-primary)}' +
-      '.pkg-peak-continue{border:1px solid transparent;background:var(--dsw-alias-label-primary);color:var(--dsw-specific-input-major)}'
+      '.pkg-peak-continue{border:1px solid transparent;background:var(--dsw-alias-label-primary);color:var(--dsw-specific-input-major)}' +
+      '.pkg-peak-page{display:flex;flex-direction:column;gap:16px;padding:4px 0;color:var(--dsw-alias-label-primary)}' +
+      '.pkg-peak-row{display:flex;align-items:center;justify-content:space-between;gap:16px}' +
+      '.pkg-peak-label{font-size:14px;line-height:22px}' +
+      '.pkg-peak-hint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}' +
+      '.pkg-peak-input{width:96px;height:32px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2-darkmode-thin);background:transparent;color:var(--dsw-alias-label-primary);padding:0 10px;font-size:14px}' +
+      '.pkg-peak-status{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}' +
+      '.pkg-peak-status-ok{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}' +
+      '.pkg-peak-status-err{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-danger,#e5484d)}'
 
     const styleId = 'dsh-peak-price-guard-css'
     if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css="' + styleId + '"]') === null) {
@@ -82,8 +93,12 @@ window.__ModuleLoader__.load({
       const answer = (allow) => {
         if (gate === null || busy) return
         setBusy(true)
-        rpc(ctx, 'peakAnswer', { gateId: gate.gateId, allow }).then(() => {
-          setGate(null)
+        rpc(ctx, 'peakAnswer', { gateId: gate.gateId, allow }).then((value) => {
+          // Only close when the Host consumed the answer; a transport failure
+          // keeps the modal so the next poll can retry.
+          if (value !== null && typeof value === 'object' && typeof value.ok === 'boolean') {
+            setGate(null)
+          }
           setBusy(false)
         })
       }
@@ -117,10 +132,110 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function PeakSettings(props) {
+      const ctx = props.ctx
+      const [config, setConfig] = React.useState(null)
+      const [hours, setHours] = React.useState('4')
+      const [enabled, setEnabled] = React.useState(true)
+      const [saving, setSaving] = React.useState(false)
+      const [message, setMessage] = React.useState(null)
+
+      const load = () =>
+        rpc(ctx, 'peakGetConfig').then((value) => {
+          if (value === null || typeof value !== 'object') return
+          setConfig(value)
+          setHours(String(value.promptWindowHours))
+          setEnabled(value.enabled !== false)
+        })
+
+      React.useEffect(() => {
+        load()
+      }, [])
+
+      const save = () => {
+        if (saving) return
+        setSaving(true)
+        setMessage(null)
+        rpc(ctx, 'peakSetConfig', { enabled, promptWindowHours: Number(hours) }).then((value) => {
+          setSaving(false)
+          if (value !== null && typeof value === 'object' && value.ok === true) {
+            setConfig(value.config)
+            setHours(String(value.config.promptWindowHours))
+            setEnabled(value.config.enabled !== false)
+            setMessage({ ok: true, text: '已保存' })
+          } else {
+            const text = value && typeof value.error === 'string' ? value.error : '保存失败'
+            setMessage({ ok: false, text })
+            load()
+          }
+        })
+      }
+
+      return React.createElement(
+        'div',
+        { className: 'pkg-peak-page' },
+        React.createElement(
+          'div',
+          { className: 'pkg-peak-row' },
+          React.createElement(
+            'label',
+            { className: 'pkg-peak-label' },
+            '启用拦截',
+            React.createElement(
+              'input',
+              {
+                type: 'checkbox',
+                checked: enabled,
+                onChange: (event) => setEnabled(event.target.checked),
+              },
+            ),
+          ),
+          config !== null
+            ? React.createElement('span', { className: 'pkg-peak-status' }, config.peakNow ? '当前：高峰时段' : '当前：空闲时段')
+            : null,
+        ),
+        React.createElement(
+          'div',
+          { className: 'pkg-peak-row' },
+          React.createElement('span', { className: 'pkg-peak-label' }, '提醒间隔（小时）'),
+          React.createElement(
+            'input',
+            {
+              type: 'number',
+              className: 'pkg-peak-input',
+              min: '0.25',
+              max: '168',
+              step: '0.5',
+              value: hours,
+              onChange: (event) => setHours(event.target.value),
+            },
+          ),
+        ),
+        React.createElement('p', { className: 'pkg-peak-hint' }, '每个会话在此时间间隔内只提醒一次；修改后立即生效（已缓存的会话选择会被重置）。'),
+        React.createElement(
+          'div',
+          { className: 'pkg-peak-actions' },
+          message !== null
+            ? React.createElement('span', { className: message.ok ? 'pkg-peak-status-ok' : 'pkg-peak-status-err' }, message.text)
+            : null,
+          React.createElement(
+            'button',
+            { type: 'button', className: 'pkg-peak-btn pkg-peak-continue', disabled: saving, onClick: save },
+            saving ? '保存中…' : '保存',
+          ),
+        ),
+      )
+    }
+
     function apply(ctx) {
       ctx.slots.inject('shell.overlay', () =>
         ctx.slots.register({ name: 'shell.overlay', id: 'peak-price-guard' }, () =>
           React.createElement(PeakModal, { ctx }),
+        ),
+      )
+      ctx.slots.inject('settings.section', () =>
+        ctx.slots.register({ name: 'settings.section', id: 'peak-price-guard', order: 12, label: '高峰提醒' }, () =>
+          React.createElement(PeakSettings, { ctx }),
         ),
       )
     }
