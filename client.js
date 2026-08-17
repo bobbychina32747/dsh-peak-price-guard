@@ -1,19 +1,11 @@
 /**
  * dsh-peak-price-guard — Client half.
  *
- * A hand-written module-loader bundle (no build toolchain required): the web
- * app's `window.__ModuleLoader__` executes this file, registers the factory
- * under the package id, and materializes it when the client composition
- * mounts the plugin. The factory receives `require` for platform seed words
- * (`react`) and other registered bundles.
- *
- * Two surfaces:
- *  - a frame-wide two-button modal in the `shell.overlay` slot that polls the
- *    Host's SRC remote `peak-price-guard/peakPending` every 800ms and answers
- *    through `peak-price-guard/peakAnswer`;
- *  - a settings page (`settings.section` id `peak-price-guard`) that reads and
- *    writes `enabled` / `promptWindowHours` through `peakGetConfig` /
- *    `peakSetConfig`.
+ * Hand-written module-loader bundle (no build toolchain required). Two
+ * surfaces: a frame-wide modal in `shell.overlay` (two/three-button confirm
+ * with a premium estimate, plus a deferred-park status card) and a settings
+ * page in `settings.section`. Host RPC goes over the Typert gateway's SRC
+ * endpoints `peak-price-guard/<method>`.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-peak-price-guard',
@@ -23,15 +15,17 @@ window.__ModuleLoader__.load({
     const React = require('react')
 
     const CSS = '.pkg-peak-backdrop{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);pointer-events:auto;z-index:1000;padding:24px}' +
-      '.pkg-peak-card{width:100%;max-width:420px;border:1px solid var(--dsw-alias-border-l2-darkmode-thin);background:var(--dsw-specific-input-major);box-shadow:var(--dsw-shadow-lv2);border-radius:16px;padding:20px;color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;gap:8px}' +
+      '.pkg-peak-card{width:100%;max-width:440px;border:1px solid var(--dsw-alias-border-l2-darkmode-thin);background:var(--dsw-specific-input-major);box-shadow:var(--dsw-shadow-lv2);border-radius:16px;padding:20px;color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;gap:8px}' +
       '.pkg-peak-title{margin:0;font-size:16px;font-weight:600;line-height:22px}' +
       '.pkg-peak-question{margin:0;font-size:14px;line-height:22px}' +
       '.pkg-peak-model{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}' +
       '.pkg-peak-note{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}' +
+      '.pkg-peak-cost{margin:0;font-size:13px;line-height:20px;font-weight:600}' +
       '.pkg-peak-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px}' +
       '.pkg-peak-btn{min-width:88px;height:32px;border-radius:8px;font-size:14px;line-height:20px;cursor:pointer;padding:0 16px}' +
       '.pkg-peak-btn:disabled{opacity:0.5;cursor:default}' +
       '.pkg-peak-cancel{border:1px solid var(--dsw-alias-border-l2-darkmode-thin);background:transparent;color:var(--dsw-alias-label-primary)}' +
+      '.pkg-peak-defer{border:1px solid var(--dsw-alias-border-l2-darkmode-thin);background:transparent;color:var(--dsw-alias-label-secondary)}' +
       '.pkg-peak-continue{border:1px solid transparent;background:var(--dsw-alias-label-primary);color:var(--dsw-specific-input-major)}' +
       '.pkg-peak-page{display:flex;flex-direction:column;gap:16px;padding:4px 0;color:var(--dsw-alias-label-primary)}' +
       '.pkg-peak-row{display:flex;align-items:center;justify-content:space-between;gap:16px}' +
@@ -68,6 +62,35 @@ window.__ModuleLoader__.load({
         })
     }
 
+    function formatYuan(yuan) {
+      if (!Number.isFinite(yuan)) return ''
+      if (yuan < 0.01) return '<¥0.01'
+      return '¥' + yuan.toFixed(2)
+    }
+
+    function formatTokens(n) {
+      if (!Number.isFinite(n)) return '?'
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+      return String(Math.round(n))
+    }
+
+    function beijingHhMm(ms) {
+      return new Date(ms + 8 * 3600 * 1000).toISOString().slice(11, 16)
+    }
+
+    function costLine(cost) {
+      if (cost === null || typeof cost !== 'object') return null
+      return (
+        '预估本次高峰溢价 ' +
+        formatYuan(cost.yuan) +
+        '（上限：输入 ' +
+        formatTokens(cost.inputTokens) +
+        ' tokens 全按未命中缓存、输出最多 ' +
+        formatTokens(cost.outputTokens) +
+        ' tokens）'
+      )
+    }
+
     function PeakModal(props) {
       const ctx = props.ctx
       const [gate, setGate] = React.useState(null)
@@ -79,7 +102,12 @@ window.__ModuleLoader__.load({
           rpc(ctx, 'peakPending').then((pending) => {
             if (cancelled) return
             if (pending !== null && typeof pending === 'object') {
-              setGate((current) => (current !== null && current.gateId === pending.gateId ? current : pending))
+              setGate((current) => {
+                if (current !== null && current.gateId === pending.gateId && current.state === pending.state && current.deferUntil === pending.deferUntil) {
+                  return current
+                }
+                return pending
+              })
             }
           })
         poll()
@@ -90,42 +118,61 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
-      const answer = (allow) => {
+      const answer = (action) => {
         if (gate === null || busy) return
         setBusy(true)
-        rpc(ctx, 'peakAnswer', { gateId: gate.gateId, allow }).then((value) => {
-          // Only close when the Host consumed the answer; a transport failure
-          // keeps the modal so the next poll can retry.
-          if (value !== null && typeof value === 'object' && typeof value.ok === 'boolean') {
-            setGate(null)
-          }
+        rpc(ctx, 'peakAnswer', { gateId: gate.gateId, action }).then((value) => {
+          const consumed = value !== null && typeof value === 'object' && typeof value.ok === 'boolean'
+          if (consumed && action !== 'defer') setGate(null)
+          // defer keeps the modal open; the next poll switches it to the deferred card.
           setBusy(false)
         })
       }
 
       if (gate === null) return null
+      const deferred = gate.state === 'deferred'
       return React.createElement(
         'div',
         { className: 'pkg-peak-backdrop' },
         React.createElement(
           'div',
           { className: 'pkg-peak-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'pkg-peak-title' },
-          React.createElement('h2', { id: 'pkg-peak-title', className: 'pkg-peak-title' }, '高峰时段价格提醒'),
-          React.createElement('p', { className: 'pkg-peak-question' }, gate.question),
-          gate.model ? React.createElement('p', { className: 'pkg-peak-model' }, '模型：' + gate.model) : null,
-          gate.note ? React.createElement('p', { className: 'pkg-peak-note' }, gate.note) : null,
+          React.createElement('h2', { id: 'pkg-peak-title', className: 'pkg-peak-title' }, deferred ? '已延后到空闲时段' : '高峰时段价格提醒'),
+          deferred
+            ? React.createElement('p', { className: 'pkg-peak-question' }, '本请求将在北京时间 ' + (gate.deferUntil ? beijingHhMm(gate.deferUntil) : '—') + ' 空闲时段自动执行。')
+            : React.createElement('p', { className: 'pkg-peak-question' }, gate.question),
+          !deferred && gate.model ? React.createElement('p', { className: 'pkg-peak-model' }, '模型：' + gate.model) : null,
+          !deferred && gate.cost ? React.createElement('p', { className: 'pkg-peak-cost' }, costLine(gate.cost)) : null,
+          deferred
+            ? React.createElement('p', { className: 'pkg-peak-note' }, '期间会话保持运行，后续消息会排队在空闲时段依次执行。')
+            : gate.note
+              ? React.createElement('p', { className: 'pkg-peak-note' }, gate.note)
+              : null,
           React.createElement(
             'div',
             { className: 'pkg-peak-actions' },
+            deferred
+              ? React.createElement(
+                  'button',
+                  { type: 'button', className: 'pkg-peak-btn pkg-peak-cancel', disabled: busy, onClick: () => answer('deny') },
+                  '取消延后',
+                )
+              : React.createElement(
+                  'button',
+                  { type: 'button', className: 'pkg-peak-btn pkg-peak-cancel', disabled: busy, onClick: () => answer('deny') },
+                  '取消',
+                ),
+            deferred
+              ? null
+              : React.createElement(
+                  'button',
+                  { type: 'button', className: 'pkg-peak-btn pkg-peak-defer', disabled: busy, onClick: () => answer('defer') },
+                  '延后执行',
+                ),
             React.createElement(
               'button',
-              { type: 'button', className: 'pkg-peak-btn pkg-peak-cancel', disabled: busy, onClick: () => answer(false) },
-              '取消',
-            ),
-            React.createElement(
-              'button',
-              { type: 'button', className: 'pkg-peak-btn pkg-peak-continue', disabled: busy, onClick: () => answer(true) },
-              '继续',
+              { type: 'button', className: 'pkg-peak-btn pkg-peak-continue', disabled: busy, onClick: () => answer('allow') },
+              deferred ? '立即执行' : '继续',
             ),
           ),
         ),

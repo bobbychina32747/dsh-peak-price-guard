@@ -1,6 +1,6 @@
 {
   "name": "dsh-peak-price-guard",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "DeepSeek Harness plugin: intercepts DeepSeek API requests during Beijing peak hours (09:00-12:00 / 14:00-18:00, 2x price) and shows a two-button confirmation modal. Prompts once per session per N hours.",
   "type": "module",
   "main": "index.js",

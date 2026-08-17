@@ -2,7 +2,9 @@
 
 DeepSeek Harness 插件：**高峰时段拦截 DeepSeek API 请求，弹窗确认后再放行**。
 
-- 北京时间高峰时段（**9:00–12:00 / 14:00–18:00**，此时 DeepSeek 官方价格为空闲时段的两倍）内，任何发往 DeepSeek 的模型请求会被挂起并弹出二选一确认框：**[取消] / [继续]**。
+- 北京时间高峰时段（**9:00–12:00 / 14:00–18:00**，此时 DeepSeek 官方价格为空闲时段的两倍）内，任何发往 DeepSeek 的模型请求会被挂起并弹出三选一确认框：**[取消] / [延后执行] / [继续]**。
+- **成本预估**：弹窗上显示本次请求的高峰溢价上限估算（输入按全未命中缓存、输出按 `maxTokens`/默认 2048 计；价格内置于官方 V4 定价表，可用组合行 `pricing` 覆盖；模型无价格条目时隐藏）。
+- **延后执行**：把请求挂起到下一个空闲时段边界（12:00 / 18:00）自动执行；期间会话保持运行，后续消息进入收件箱队列，全部在空闲时段依次执行——不紧急的批量任务直接排队即可。
 - 每个会话每 **N 小时**（默认 4，可配置）只询问一次，之后沿用上次选择（取消则拦截、继续则静默放行）。
 - 只拦截**根会话**的请求；子代理、compaction、会话标题生成等内部调用不受影响。
 - 120 秒无应答自动放行（fail-open），页面未打开时请求不会永久挂起。
@@ -38,6 +40,11 @@ dsh plugin --profile web remove dsh-peak-price-guard
     promptWindowHours: 4   # 默认提醒间隔（小时）
     enabled: true          # 默认开关
     extraProviders: []     # 自定义指向 api.deepseek.com 的 provider id 列表
+    pricing:               # 价格覆盖（元/百万 tokens，高峰价；溢价按 50% 计）
+      deepseek-v4-pro:
+        inputMiss: 9.0
+        cacheHit: 0.3
+        output: 27.0
 ```
 
 ## 工作原理
@@ -55,6 +62,7 @@ dsh plugin --profile web remove dsh-peak-price-guard
 - 针对 **DeepSeek Harness `0.1.0-rc.6`** 开发与验证。上游是开发者预览版，`dsh.bundle`/`dsh.client`/SRC Remote 协议可能变动，升级前请核对。
 - 客户端 bundle 为手写的 `window.__ModuleLoader__` 工厂格式，无需打包工具；如需改成 TypeScript/JSX，请自行接入构建并保持该输出格式。
 - 识别范围以 **provider id** 为准（`deepseek-official` 或含 `deepseek` 的 provider）：第三方平台（如 OpenRouter）即使提供 deepseek 模型，其定价不遵循官方高峰/空闲方案，不会被拦截。
+- **延后执行的边界**：挂起最长约 4 小时（14:00 延后到 18:00）；期间请求占用该会话的当前轮次，若会话/进程被关闭则请求随之中止（不会自动重发）。价格表如有调整请用组合行 `pricing` 覆盖。
 - 本插件是社区作品，与 DeepSeek 官方无关联、未经其背书。高峰时段定义（9:00–12:00 / 14:00–18:00）来自 DeepSeek 官方定价页，请以官方最新公告为准。
 
 ## License
