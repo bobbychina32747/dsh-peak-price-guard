@@ -4,7 +4,9 @@ DeepSeek Harness 插件：**高峰时段拦截 DeepSeek API 请求，弹窗确�
 
 - 北京时间高峰时段（**9:00–12:00 / 14:00–18:00**，此时 DeepSeek 官方价格为空闲时段的两倍）内，任何发往 DeepSeek 的模型请求会被挂起并弹出三选一确认框：**[取消] / [延后执行] / [继续]**。
 - **成本预估**：弹窗上显示本次请求的高峰溢价上限估算（输入按全未命中缓存、输出按 `maxTokens`/默认 2048 计；价格内置于官方 V4 定价表，可用组合行 `pricing` 覆盖；模型无价格条目时隐藏）。
-- **延后执行**：把请求挂起到下一个空闲时段边界（12:00 / 18:00）自动执行；期间会话保持运行，后续消息进入收件箱队列，全部在空闲时段依次执行——不紧急的批量任务直接排队即可。
+- **延后执行**：把请求挂起到下一个空闲时段边界（12:00 / 18:00）或每天指定北京时刻（设置 `deferHour`）自动执行；期间会话保持运行，后续消息进入收件箱队列依次执行。
+- **智能路由**：小额请求（`smallRequestTokens`，默认 0 关闭）自动放行；用户消息关键词表自动放行/自动延后；`globalAllowlist` 模型子串永不拦截；`mode: observe` 仅记录不拦截。
+- **战绩面板**：设置页展示累计节省（估算）、实际高峰溢价支出（按 usage chunk 实算）、继续/延后/取消/自动放行计数、北京时段热门排行；数据持久化于 `$DSH_HOME/plugins/peak-price-guard-stats.json`。每次处理请求会在控制台留下一行签名日志（`[dsh-peak-price-guard] 已为您拦截高峰请求 v1.3.0`）。
 - 每个会话每 **N 小时**（默认 4，可配置）只询问一次，之后沿用上次选择（取消则拦截、继续则静默放行）。
 - 只拦截**根会话**的请求；子代理、compaction、会话标题生成等内部调用不受影响。
 - 120 秒无应答自动放行（fail-open），页面未打开时请求不会永久挂起。
@@ -30,17 +32,27 @@ dsh plugin --profile web remove dsh-peak-price-guard
 
 ## 配置
 
-**设置页**（推荐）：设置 → **高峰提醒**，可开关拦截、调整提醒间隔（0.25–168 小时），保存即生效（持久化到用户设置文档，无需重启；修改会重置已缓存的会话选择）。
+**设置页**（推荐）：设置 → **高峰提醒**，可配置：启用开关、运行模式（拦截/仅记录）、提醒间隔（0.25–168 小时）、小额免打扰阈值（tokens）、延后执行时刻（北京小时，-1 = 下一个空闲边界）；保存即生效（持久化到用户设置文档，无需重启）。
 
 **组合行配置**（高级）：作为设置的 `base` 层，或当作无设置服务时的兜底，编辑 `~/.dsh/profiles/web/cordis.patch.yml`：
 
 ```yaml
 - id: peak-price-guard
   config:
-    promptWindowHours: 4   # 默认提醒间隔（小时）
-    enabled: true          # 默认开关
-    extraProviders: []     # 自定义指向 api.deepseek.com 的 provider id 列表
-    pricing:               # 价格覆盖（元/百万 tokens，高峰价；溢价按 50% 计）
+    promptWindowHours: 4    # 默认提醒间隔（小时）
+    enabled: true           # 默认开关
+    mode: guard             # guard | observe（仅记录）
+    smallRequestTokens: 0   # 低于该输入 token 数自动放行（0 = 关闭）
+    deferHour: -1           # -1 = 下一个空闲边界；0-23 = 每天该北京时刻执行
+    autoAllowKeywords:      # 用户消息含以下关键词 → 自动放行
+      - 紧急
+      - 立即
+    autoDeferKeywords:      # 用户消息含以下关键词 → 自动延后
+      - 批量
+      - 后台
+    globalAllowlist: []     # 模型 id 子串白名单，永不拦截
+    extraProviders: []      # 自定义指向 api.deepseek.com 的 provider id 列表
+    pricing:                # 价格覆盖（元/百万 tokens，高峰价；溢价按 50% 计）
       deepseek-v4-pro:
         inputMiss: 9.0
         cacheHit: 0.3

@@ -179,20 +179,38 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function topHours(byHour) {
+      if (!Array.isArray(byHour)) return '—'
+      const hours = byHour.map((count, hour) => ({ hour, count })).filter((e) => e.count > 0)
+      hours.sort((a, b) => b.count - a.count)
+      if (hours.length === 0) return '暂无'
+      return hours.slice(0, 3).map((e) => e.hour + ':00 ×' + e.count).join('　')
+    }
+
     function PeakSettings(props) {
       const ctx = props.ctx
       const [config, setConfig] = React.useState(null)
       const [hours, setHours] = React.useState('4')
       const [enabled, setEnabled] = React.useState(true)
+      const [mode, setMode] = React.useState('guard')
+      const [smallTokens, setSmallTokens] = React.useState('0')
+      const [deferHour, setDeferHour] = React.useState('-1')
       const [saving, setSaving] = React.useState(false)
       const [message, setMessage] = React.useState(null)
+
+      const applyConfigView = (value) => {
+        setConfig(value)
+        setHours(String(value.promptWindowHours))
+        setEnabled(value.enabled !== false)
+        setMode(value.mode === 'observe' ? 'observe' : 'guard')
+        setSmallTokens(String(value.smallRequestTokens ?? 0))
+        setDeferHour(String(value.deferHour ?? -1))
+      }
 
       const load = () =>
         rpc(ctx, 'peakGetConfig').then((value) => {
           if (value === null || typeof value !== 'object') return
-          setConfig(value)
-          setHours(String(value.promptWindowHours))
-          setEnabled(value.enabled !== false)
+          applyConfigView(value)
         })
 
       React.useEffect(() => {
@@ -203,12 +221,16 @@ window.__ModuleLoader__.load({
         if (saving) return
         setSaving(true)
         setMessage(null)
-        rpc(ctx, 'peakSetConfig', { enabled, promptWindowHours: Number(hours) }).then((value) => {
+        rpc(ctx, 'peakSetConfig', {
+          enabled,
+          mode,
+          promptWindowHours: Number(hours),
+          smallRequestTokens: Number(smallTokens),
+          deferHour: Number(deferHour),
+        }).then((value) => {
           setSaving(false)
           if (value !== null && typeof value === 'object' && value.ok === true) {
-            setConfig(value.config)
-            setHours(String(value.config.promptWindowHours))
-            setEnabled(value.config.enabled !== false)
+            applyConfigView(value.config)
             setMessage({ ok: true, text: '已保存' })
           } else {
             const text = value && typeof value.error === 'string' ? value.error : '保存失败'
@@ -218,6 +240,7 @@ window.__ModuleLoader__.load({
         })
       }
 
+      const stats = config !== null && config.stats !== null && typeof config.stats === 'object' ? config.stats : null
       return React.createElement(
         'div',
         { className: 'pkg-peak-page' },
@@ -228,14 +251,7 @@ window.__ModuleLoader__.load({
             'label',
             { className: 'pkg-peak-label' },
             '启用拦截',
-            React.createElement(
-              'input',
-              {
-                type: 'checkbox',
-                checked: enabled,
-                onChange: (event) => setEnabled(event.target.checked),
-              },
-            ),
+            React.createElement('input', { type: 'checkbox', checked: enabled, onChange: (event) => setEnabled(event.target.checked) }),
           ),
           config !== null
             ? React.createElement('span', { className: 'pkg-peak-status' }, config.peakNow ? '当前：高峰时段' : '当前：空闲时段')
@@ -244,21 +260,33 @@ window.__ModuleLoader__.load({
         React.createElement(
           'div',
           { className: 'pkg-peak-row' },
-          React.createElement('span', { className: 'pkg-peak-label' }, '提醒间隔（小时）'),
+          React.createElement('span', { className: 'pkg-peak-label' }, '运行模式'),
           React.createElement(
-            'input',
-            {
-              type: 'number',
-              className: 'pkg-peak-input',
-              min: '0.25',
-              max: '168',
-              step: '0.5',
-              value: hours,
-              onChange: (event) => setHours(event.target.value),
-            },
+            'select',
+            { className: 'pkg-peak-input', style: { width: '140px' }, value: mode, onChange: (event) => setMode(event.target.value) },
+            React.createElement('option', { value: 'guard' }, '拦截模式'),
+            React.createElement('option', { value: 'observe' }, '仅记录模式'),
           ),
         ),
-        React.createElement('p', { className: 'pkg-peak-hint' }, '每个会话在此时间间隔内只提醒一次；修改后立即生效（已缓存的会话选择会被重置）。'),
+        React.createElement(
+          'div',
+          { className: 'pkg-peak-row' },
+          React.createElement('span', { className: 'pkg-peak-label' }, '提醒间隔（小时）'),
+          React.createElement('input', { type: 'number', className: 'pkg-peak-input', min: '0.25', max: '168', step: '0.5', value: hours, onChange: (event) => setHours(event.target.value) }),
+        ),
+        React.createElement(
+          'div',
+          { className: 'pkg-peak-row' },
+          React.createElement('span', { className: 'pkg-peak-label' }, '小额免打扰阈值（tokens）'),
+          React.createElement('input', { type: 'number', className: 'pkg-peak-input', min: '0', step: '100', value: smallTokens, onChange: (event) => setSmallTokens(event.target.value) }),
+        ),
+        React.createElement(
+          'div',
+          { className: 'pkg-peak-row' },
+          React.createElement('span', { className: 'pkg-peak-label' }, '延后执行时间（北京小时）'),
+          React.createElement('input', { type: 'number', className: 'pkg-peak-input', min: '-1', max: '23', step: '1', value: deferHour, onChange: (event) => setDeferHour(event.target.value) }),
+        ),
+        React.createElement('p', { className: 'pkg-peak-hint' }, '间隔内每会话只提醒一次；延后时间 -1 = 下一个空闲边界，0–23 = 每天该北京时刻。修改立即生效并重置缓存。'),
         React.createElement(
           'div',
           { className: 'pkg-peak-actions' },
@@ -271,6 +299,26 @@ window.__ModuleLoader__.load({
             saving ? '保存中…' : '保存',
           ),
         ),
+        stats !== null
+          ? React.createElement(
+              'div',
+              { className: 'pkg-peak-page' },
+              React.createElement('h3', { className: 'pkg-peak-title' }, '战绩'),
+              React.createElement('p', { className: 'pkg-peak-status' }, '累计节省（估算）：¥' + (Number(stats.savedYuan) || 0).toFixed(2)),
+              React.createElement('p', { className: 'pkg-peak-status' }, '实际高峰溢价支出：¥' + (Number(stats.actualPaidPeakYuan) || 0).toFixed(2)),
+              React.createElement(
+                'p',
+                { className: 'pkg-peak-status' },
+                '高峰请求 ' + (stats.requests || 0) + ' · 继续 ' + (stats.continued || 0) + ' · 延后 ' + (stats.deferred || 0) + ' · 取消 ' + (stats.denied || 0),
+              ),
+              React.createElement(
+                'p',
+                { className: 'pkg-peak-status' },
+                '小额放行 ' + (stats.autoAllowedSmall || 0) + ' · 关键词放行 ' + (stats.autoAllowedKeyword || 0) + ' · 关键词延后 ' + (stats.autoDeferredKeyword || 0) + ' · 仅记录 ' + (stats.observeLog || 0),
+              ),
+              React.createElement('p', { className: 'pkg-peak-status' }, '热门时段（北京）：' + topHours(stats.byHour)),
+            )
+          : null,
       )
     }
 
